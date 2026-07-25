@@ -1,0 +1,280 @@
+// Gas giant generator — Jupiter-like horizontal banding, zonal shear twists,
+// storm ovals. The visual signature is driven entirely by color and texture;
+// relief is only packed as a very subtle height (alpha) so the shared normal
+// pass can still produce gentle cloud-puff normals if the user wants them.
+//
+// Algorithm:
+//   1. Sample fBm in an anisotropic space where y is stretched: noise(p.xyz
+//      with y *= bandStretch). Because sampling along a parallel of latitude
+//      doesn't change y, the noise features come out stretched horizontally
+//      — natural banding without special-casing the sphere.
+//   2. Offset the sample direction along the local east tangent using a
+//      second, low-frequency "flow" fBm. This shears bands along longitude,
+//      producing the taffy-like twists characteristic of zonal winds.
+//   3. Look up the per-latitude palette (six colors) to get the band tone,
+//      modulate by the band noise for zone/belt variation and a higher-
+//      frequency detail noise for turbulence.
+//   4. Stamp elliptical storms (pre-generated on CPU) whose major axis is
+//      aligned with the east direction of their center. Storms tint the
+//      surface toward their own color with a smooth elliptical falloff.
+//   5. Darken poles.
+
+#pragma kernel CSMain
+
+#include "PlanetNoise.hlsl"
+
+struct Storm
+{
+    float4 center;  // xyz = unit-sphere center, w = angular major radius
+    float4 minor;   // x = angular minor radius, y = swirl strength (spiral rotation amount),
+                    // z = intensity, w = pad
+    float4 tint;    // rgba (a unused)
+};
+
+RWTexture2DArray<float4> _ColorOutput;
+StructuredBuffer<Storm>   _Storms;
+
+uint  _Size;
+uint  _Seed;
+uint  _StormCount;
+
+// Bands
+float _BandStretch;     // y-axis scaling in noise space → higher = crisper bands
+float _BandFrequency;
+int   _BandOctaves;
+float _BandLacunarity;
+float _BandGain;
+float _BandContrast;    // how strongly band noise modulates brightness
+float _BandRepetition;  // how many times the 6-color palette cycles from pole to pole
+float _BandLatShift;    // band-noise-driven latitude offset for palette sampling
+float _BandWarp;        // domain-warp strength on the band noise input — wavy bands, small swirls
+
+// Zonal flow (horizontal shear + curl)
+float _FlowStrength;    // magnitude of the east-tangent offset
+float _FlowFrequency;
+int   _FlowOctaves;
+float _CurlStrength;    // magnitude of the north-tangent offset (adds rotational eddies)
+
+// Detail turbulence
+float _DetailFrequency;
+int   _DetailOctaves;
+float _DetailContrast;
+
+// Storm internal texture
+float _StormNoiseFrequency;
+
+// Pole darkening
+float _PoleLatitude;
+float _PoleDarken;
+
+// Palette: 6 colors sampled by latitude from the south pole (0) to the north
+// pole (5). Set by C#: cs.SetVectorArray("_Palette", ...).
+float4 _Palette[6];
+
+// Subtle height packed in alpha for the normal pass. Gas giants shouldn't
+// really have relief but a tiny detail height makes the cloud tops breathe.
+float _HeightScale;  // unused internally — kept for API parity
+
+// ----------------------------------------------------------------------------
+// Returns the local east tangent + a smooth pole-proximity fade. The strict
+// offline shader compiler used by the Asset Store validator raises a warning
+// if an `out` parameter could be uninitialized on any code path, so we
+// assign it unconditionally before the (cheap) ternary at the end.
+float3 EastTangent(float3 d, out float fadeFromPole)
+{
+    fadeFromPole = 0.0;
+    float3 raw = cross(float3(0.0, 1.0, 0.0), d);
+    float len = length(raw);
+    fadeFromPole = smoothstep(0.0, 0.15, len);
+    return len > 1e-5 ? raw / len : float3(1.0, 0.0, 0.0);
+}
+
+float3 SamplePalette(float latMinus1To1, float repetition)
+{
+    // Cyclic palette: maps latitude into a phase that advances through all 6
+    // colors `repetition` times, wrapping from palette[5] back to palette[0]
+    // with a smooth blend. Higher repetition → more bands from the same 6
+    // colors. For the wrap to look seamless the user should keep palette[0]
+    // close to palette[5] (the defaults do).
+    float phase = saturate(latMinus1To1 * 0.5 + 0.5) * repetition * 6.0;
+    phase = fmod(phase, 6.0);
+    int idx = (int)floor(phase);
+    idx = clamp(idx, 0, 5);
+    int nxt = (idx + 1) % 6;
+    float f = phase - (float)idx;
+    float w = smoothstep(0.0, 1.0, f);
+    return lerp(_Palette[idx].rgb, _Palette[nxt].rgb, w);
+}
+
+// Rotate `v` around the unit axis `k` by `angle` (Rodrigues). Used to spiral
+// the sample position inside a storm — rotation amount scales with proximity
+// to the storm center, producing a visible cyclone when a noise is sampled
+// at the rotated direction.
+float3 RotateAroundUnitAxis(float3 v, float3 k, float angle)
+{
+    float c = cos(angle);
+    float s = sin(angle);
+    return v * c + cross(k, v) * s + k * dot(k, v) * (1.0 - c);
+}
+// ----------------------------------------------------------------------------
+
+[numthreads(8, 8, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _Size || id.y >= _Size) return;
+
+    uint face = id.z;
+    float3 dir = CubemapTexelToDir(id.xy, face, _Size);
+
+    // Anisotropic stretch: scales y up, so noise features vary slower in y
+    // than in x/z. Since moving along a parallel keeps y constant, this maps
+    // to horizontal bands on the sphere.
+    float3 stretched = float3(dir.x, dir.y * _BandStretch, dir.z);
+
+    // --- Flow: east shear + north curl --------------------------------------
+    // Two independent fBms drive the east and north tangent components of the
+    // warp. With only east-displacement you get pure zonal shear; adding a
+    // north component with its own noise introduces rotational eddies and
+    // cyclone-like swirl across the whole planet, not just inside storms.
+    float flowE = Fbm3D(stretched * _FlowFrequency,
+                        _Seed ^ 0xF10A5A00u,
+                        _FlowOctaves, 2.0, 0.5);
+    float flowN = Fbm3D(stretched * _FlowFrequency * 1.3 + float3(11.2, 3.7, 8.1),
+                        _Seed ^ 0xC012ADDAu,
+                        _FlowOctaves, 2.0, 0.5);
+
+    float poleFade;
+    float3 east = EastTangent(dir, poleFade);
+    float3 north = cross(dir, east);
+
+    float3 warpDisp = east  * flowE * _FlowStrength * poleFade
+                    + north * flowN * _CurlStrength * poleFade;
+    float3 warpedDir = normalize(dir + warpDisp);
+    float3 warpedStretched = float3(warpedDir.x, warpedDir.y * _BandStretch, warpedDir.z);
+
+    // Domain warp on the band-noise sample space. Breaks up the grid-aligned
+    // Perlin signature and, where the warp vectors curl, produces small
+    // spirals along the bands. Same idea as `warpStrength` for the terrestrial
+    // continent fBm — applied here to the stretched (y-scaled) space so the
+    // warp shears bands without destroying them.
+    float3 bandSamplePos = warpedStretched;
+    if (_BandWarp > 0.0)
+        bandSamplePos = DomainWarp3D(bandSamplePos,
+                                     _Seed ^ 0xBAD4BA4Du,
+                                     _BandWarp);
+
+    // --- Band noise (used both for brightness modulation and lat shift) -----
+    float bandNoise = Fbm3D(bandSamplePos * _BandFrequency,
+                            _Seed,
+                            _BandOctaves, _BandLacunarity, _BandGain);
+
+    // --- Palette lookup: latitude shifted by band noise ---------------------
+    // The band noise pushes the effective latitude used for palette sampling
+    // up or down. Combined with _BandRepetition this is what multiplies the
+    // visible band count far beyond the 6 palette slots: a single latitude
+    // range can span several palette cycles as the shift wobbles it.
+    float shiftedLat = warpedDir.y + bandNoise * _BandLatShift;
+    float3 paletteCol = SamplePalette(shiftedLat, _BandRepetition);
+
+    // --- Detail noise: fine turbulence --------------------------------------
+    // Shares the warped position so the turbulence swirls in the same places
+    // as the band noise, keeping them visually coherent.
+    float detail = Fbm3D(bandSamplePos * _DetailFrequency,
+                         _Seed ^ 0xD37A11Du,
+                         _DetailOctaves, 2.0, 0.5);
+
+    float bandMul   = 1.0 + bandNoise * _BandContrast;
+    float detailMul = 1.0 + detail    * _DetailContrast * 0.5;
+    float3 col = paletteCol * bandMul * detailMul;
+
+    // --- Storms -------------------------------------------------------------
+    // Each storm is an elliptical cyclone. Inside the footprint:
+    //   - the sample direction is rotated around the storm center by an angle
+    //     that grows from 0 at the edge to swirl*2π at the center (tighter
+    //     spiral toward the eye),
+    //   - a storm-seeded fBm is sampled at the rotated direction, producing a
+    //     visible spiral texture inside the oval,
+    //   - the oval mask is multiplied by an edge-noise term so the boundary
+    //     bleeds raggedly into the surrounding band rather than drawing a
+    //     clean ellipse line.
+    float3 stormAccum = float3(0.0, 0.0, 0.0);
+    float  stormWeight = 0.0;
+    for (uint i = 0; i < _StormCount; i++)
+    {
+        Storm s = _Storms[i];
+        float3 sc = s.center.xyz;
+        float majorR = s.center.w;
+        float minorR = s.minor.x;
+        float swirl  = s.minor.y;
+        float intensity = s.minor.z;
+        if (majorR <= 1e-4 || minorR <= 1e-4) continue;
+
+        float cosA = clamp(dot(dir, sc), -1.0, 1.0);
+        float angle = acos(cosA);
+        if (angle > majorR * 1.25) continue;
+
+        float fadeS = 0.0;
+        float3 sEast = EastTangent(sc, fadeS);
+        float3 sNorth = cross(sc, sEast);
+
+        float3 delta = dir - sc * dot(dir, sc);
+        float eProj = dot(delta, sEast);
+        float nProj = dot(delta, sNorth);
+
+        float t2 = (eProj * eProj) / (majorR * majorR)
+                 + (nProj * nProj) / (minorR * minorR);
+        float t = sqrt(t2);
+        if (t > 1.15) continue;
+
+        // Storm-local seed from center coordinates — makes each storm sample
+        // a different noise, so they don't all show an identical pattern.
+        // Pre-multiply the components into temporaries to avoid `asuint(expr)`
+        // which some strict compilers (validator's offline DXC) flag.
+        float sx = sc.x;
+        float sy = sc.y * 1.7;
+        float sz = sc.z * 2.3;
+        uint stormSeed = asuint(sx) ^ asuint(sy) ^ asuint(sz) ^ 0x51057E05u;
+
+        // Spiral: rotate dir around sc by swirl × 2π × (1-t). Strong rotation
+        // near the eye, zero at the rim. Sampling a noise at the rotated
+        // position unwinds as a visible spiral.
+        float rotAngle = swirl * 6.28318530 * saturate(1.0 - t);
+        float3 swirledDir = RotateAroundUnitAxis(dir, sc, rotAngle);
+        float spiralNoise = Fbm3D(swirledDir * _StormNoiseFrequency,
+                                  stormSeed, 4, 2.0, 0.5);
+
+        // Ragged edge: slightly displace the effective t by a high-frequency
+        // noise so the oval boundary dissolves into the surrounding bands
+        // instead of looking stamped.
+        float edgeJitter = PerlinNoise3D(dir * 22.0 + sc * 7.0, stormSeed ^ 0xEDu);
+        float tRagged = t - edgeJitter * 0.08;
+        float mask = 1.0 - smoothstep(0.55, 1.05, tRagged);
+        if (mask <= 0.0) continue;
+
+        // Tint modulated by the spiral noise — removes the uniform-blob look.
+        float3 stormCol = s.tint.rgb * (1.0 + spiralNoise * 0.45);
+
+        float w = mask * intensity;
+        stormAccum += stormCol * w;
+        stormWeight += w;
+    }
+
+    if (stormWeight > 1e-5)
+    {
+        float3 stormCol = stormAccum / stormWeight;
+        col = lerp(col, stormCol, saturate(stormWeight));
+    }
+
+    // --- Pole darkening ----------------------------------------------------
+    float absLat = abs(dir.y);
+    float darkT = smoothstep(_PoleLatitude, 1.0, absLat) * _PoleDarken;
+    col *= 1.0 - darkT;
+
+    // --- Height packing (subtle) -------------------------------------------
+    // The detail noise doubles as a tiny height signal for the normal pass.
+    // Range mapped to [0, 1] naively; _HeightScale in C# controls actual
+    // displacement at normal-derivation time.
+    float height01 = saturate(detail * 0.5 + 0.5);
+
+    _ColorOutput[uint3(id.xy, face)] = float4(col, height01);
+}

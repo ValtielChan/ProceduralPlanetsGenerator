@@ -1,0 +1,37 @@
+// Debug compute: fills a cubemap face-slice with fBm of 3D noise evaluated at
+// the sphere direction. Used to verify cross-face continuity before wiring up
+// the real terrestrial / rocky generators.
+
+#pragma kernel CSMain
+
+#include "PlanetNoise.hlsl"
+
+// RWTexture2DArray with 6 slices = one cubemap face per slice. Unity exposes
+// RenderTextures created with dimension=Cube as a Tex2DArray in compute.
+RWTexture2DArray<float4> _Output;
+
+uint  _Size;
+uint  _Seed;
+float _Frequency;
+int   _Octaves;
+float _Lacunarity;
+float _Gain;
+float _WarpStrength;
+
+[numthreads(8, 8, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _Size || id.y >= _Size) return;
+
+    uint face = id.z;
+    float3 dir = CubemapTexelToDir(id.xy, face, _Size);
+
+    float3 p = dir * _Frequency;
+    if (_WarpStrength > 0.0)
+        p = DomainWarp3D(p, _Seed ^ 0x9E3779B9u, _WarpStrength);
+
+    float n = Fbm3D(p, _Seed, _Octaves, _Lacunarity, _Gain);
+    float g = saturate(n * 0.5 + 0.5);
+
+    _Output[uint3(id.xy, face)] = float4(g, g, g, 1.0);
+}

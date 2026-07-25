@@ -1,0 +1,59 @@
+﻿{
+    "planetType": "rocky",
+    "name": "Moon",
+    "seed": 1,
+    "cubemapSize": 1024,
+    "baseFrequency": 7.519999980926514,
+    "baseOctaves": 8,
+    "baseLacunarity": 2.0,
+    "baseGain": 0.5,
+    "baseAmplitude": 0.18000000715255738,
+    "baseWarp": 0.4000000059604645,
+    "mareEnabled": true,
+    "mareFrequency": 1.7699999809265137,
+    "mareCoverage": 0.5130000114440918,
+    "mareSoftness": 0.07999999821186066,
+    "mareFlatten": 0.0,
+    "mareDepth": 0.2619999945163727,
+    "dustFrequency": 0.5,
+    "dustStrength": 0.25,
+    "polesEnabled": false,
+    "poleLatitude": 0.8199999928474426,
+    "poleBlendWidth": 0.10000000149011612,
+    "poleNoiseStrength": 0.05000000074505806,
+    "detailEnabled": true,
+    "detailMapAssetPath": "Assets/Procedural Planets Generator/Textures/RockyAlbedo.tif",
+    "detailTiling": 0.11999999731779099,
+    "detailOffsetU": 1.5199999809265137,
+    "detailOffsetV": 0.0,
+    "detailStrength": 1.0,
+    "detailBlendSharpness": 16.0,
+    "detailNormalEnabled": true,
+    "detailNormalMapAssetPath": "Assets/Procedural Planets Generator/Textures/RockyNormal.tif",
+    "detailNormalStrength": 0.8500000238418579,
+    "heightScale": 0.02500000037252903,
+    "highlandColor": {
+        "r": 0.7400000095367432,
+        "g": 0.7200000286102295,
+        "b": 0.6800000071525574,
+        "a": 1.0
+    },
+    "mareColor": {
+        "r": 0.07547169923782349,
+        "g": 0.07547169923782349,
+        "b": 0.07547169923782349,
+        "a": 1.0
+    },
+    "dustColor": {
+        "r": 0.550000011920929,
+        "g": 0.5099999904632568,
+        "b": 0.46000000834465029,
+        "a": 1.0
+    },
+    "polarColor": {
+        "r": 0.949999988079071,
+        "g": 0.949999988079071,
+        "b": 0.9700000286102295,
+        "a": 1.0
+    }
+}

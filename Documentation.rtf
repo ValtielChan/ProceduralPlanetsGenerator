@@ -1,0 +1,52 @@
+﻿{\rtf1\ansi\ansicpg1252\deff0\nouicompat\deflang1033{\fonttbl{\f0\fnil\fcharset0 Calibri;}}
+{\colortbl ;\red100\green100\blue100;}
+{\*\generator Valtiel Planet Generator Documentation}\viewkind4\uc1
+\pard\sa200\sl276\slmult1\f0\fs36\b Planet Generator\par
+\fs22\b0 Editor tool for Unity URP that generates planet & star prefabs at design time.\par
+Each planet ships as a self-contained set of cubemap PNGs, materials, and a ready-to-drop prefab.\par
+\par
+\fs28\b 1. Requirements\par
+\fs22\b0
+\bullet  Unity 6000.0.61f1 (Unity 6.0 LTS) or later \endash  this is the version the asset was developed and tested on.\par
+\bullet  Universal Render Pipeline installed and active.\par
+\bullet  For the optional CPU backend: Burst + Collections + Mathematics packages (Package Manager \endash  Unity Registry). These are part of Unity's standard package set; most projects already have them.\par
+\par
+\fs28\b 2. Opening the tool\par
+\fs22\b0 Window \endash  Planet Generator\par
+\par
+The tool spawns a hidden preview sphere in the active scene. Make sure the scene has a Directional Light for proper preview shading. A ready-to-use demo scene is provided at Samples/Demo.unity.\par
+\par
+\fs28\b 3. Generator modes\par
+\fs22\b0
+\bullet  Terrestrial \endash  Continents, oceans, beaches, biomes (desert/grass/forest), mountains, polar caps, clouds.\par
+\bullet  Rocky \endash  Airless surface with mare plains, regolith, optional polar ice, and a tileable detail texture mapped triplanar onto the sphere.\par
+\bullet  Gas Giant \endash  Latitude bands, zonal flow + curl, storm ovals, pole darkening.\par
+\bullet  Star \endash  Photosphere with granulation, sunspots, HDR emission for bloom.\par
+\bullet  Debug Noise \endash  Visualizes the underlying 3D fBm.\par
+\par
+\fs28\b 4. Workflow\par
+\fs22\b0 1. Choose mode, tweak sliders \endash  the preview updates live.\par
+2. Randomize Seed for variations of the same parameter set.\par
+3. Set Name and Export Resolution (1024-2048 recommended).\par
+4. Click Save Planet. The tool writes the cubemap PNGs, materials, prefab and params.json under Assets/Procedural Planets Generator/Library/\{Name\}/.\par
+5. Drag the prefab into any URP scene. Lit by your scene's directional light and ambient \endash  no setup required.\par
+\par
+\fs28\b 5. Backend selection (GPU vs CPU)\par
+\fs22\b0 The generator ships with two interchangeable backends selectable from the top of the editor window.\par
+\par
+\bullet  GPU \endash  1-5 ms per regen at 512x512 cubemap. Requires DX11+/Vulkan/Metal/WebGPU. Not WebGL 2.0.\par
+\bullet  CPU \endash  50-300 ms per regen at 512x512 cubemap. Works on every platform Unity targets.\par
+\par
+The CPU path uses Burst-compiled Jobs. Visual output matches the GPU path within float precision. Choose CPU if your dev machine doesn't support compute shaders or for guaranteed cross-platform identical output. Choose GPU otherwise \endash  it's an order of magnitude faster for live slider-tweaking.\par
+\par
+\fs28\b 6. How the no-pole-pinching works\par
+\fs22\b0 Standard equirectangular textures pinch at the poles because the UV parameterization stretches there. Instead, this asset generates cubemaps (6 faces, seamless at edges) and uses a custom URP Lit shader (Valtiel/Planet/Surface) that samples the cubemap by object-space normal rather than UV. Every point on the sphere maps to a unique direction \endash  a unique texel. No pinching, no seams.\par
+\par
+The shader is otherwise URP Lit-equivalent: main light + additional lights + shadows + GI + fog all work normally.\par
+\par
+\fs28\b 7. Reproducibility\par
+\fs22\b0 params.json contains the seed and every slider value. Re-loading the JSON and re-exporting produces a bit-identical result on the same machine. For cross-machine determinism, ship the exported PNG textures themselves, not just the JSON.\par
+\par
+\fs28\b 8. License\par
+\fs22\b0 See the asset's Asset Store listing for the applicable license terms.\par
+}

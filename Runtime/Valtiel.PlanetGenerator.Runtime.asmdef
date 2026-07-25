@@ -1,0 +1,19 @@
+{
+    "name": "Valtiel.PlanetGenerator.Runtime",
+    "rootNamespace": "Valtiel.PlanetGenerator",
+    "references": [
+        "Unity.RenderPipelines.Universal.Runtime",
+        "Unity.Burst",
+        "Unity.Collections",
+        "Unity.Mathematics"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

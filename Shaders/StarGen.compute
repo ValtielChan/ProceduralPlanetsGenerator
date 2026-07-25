@@ -1,0 +1,143 @@
+// Star generator — static color + emission cubemap. The algorithm layers:
+//   1. Domain-warped macro fBm giving large "temperature" variations across
+//      the surface (hotter plasma vs cooler regions).
+//   2. High-frequency granulation noise emulating convective cells.
+//   3. Sunspot stamps (pre-generated list, same StructuredBuffer pattern as
+//      craters/storms) that darken local regions and pull temperature down.
+//   4. A 5-entry temperature palette (cold→hot) looked up by the final
+//      temperature at each texel.
+//
+// Outputs two RTs in one pass:
+//   - `_ColorOutput`: rgb = surface color, alpha = 1
+//   - `_EmissionOutput`: rgb = emission intensity (grayscale, replicated),
+//     alpha = 1. Splatting to rgb lets the runtime shader read from any
+//     channel and keeps the exported PNG a normal grayscale image.
+
+#pragma kernel CSMain
+
+#include "PlanetNoise.hlsl"
+
+struct SunSpot
+{
+    float4 centerRadius; // xyz = unit-sphere center, w = angular major radius
+    float4 params;       // x = minor radius, y = darken strength, z = softness, w = pad
+};
+
+RWTexture2DArray<float4> _ColorOutput;
+RWTexture2DArray<float4> _EmissionOutput;
+StructuredBuffer<SunSpot> _Spots;
+
+uint  _Size;
+uint  _Seed;
+uint  _SpotCount;
+
+// Domain warp applied to the macro sample point. Like the gas-giant BandWarp,
+// this twists what would otherwise be grid-aligned Perlin features, producing
+// plausible filaments and swirls across the photosphere.
+float _Warp;
+
+// Macro (large temperature regions)
+float _MacroFrequency;
+int   _MacroOctaves;
+float _MacroLacunarity;
+float _MacroGain;
+
+// Granulation (small-scale convection mottling)
+float _GranuleFrequency;
+int   _GranuleOctaves;
+float _GranuleContrast;
+
+// Emission mapping
+float _EmissionFloor;          // minimum emission intensity written to alpha
+float _EmissionScale;          // how much temperature boosts emission
+float _SpotEmissionDarken;     // how much spots subtract from emission
+
+// 5-entry temperature palette, index 0 = coldest (spot umbra), 4 = hottest.
+float4 _Palette[5];
+
+float3 SampleStarPalette(float t01)
+{
+    float t = saturate(t01) * 4.0;
+    int i = (int)floor(t);
+    i = clamp(i, 0, 3);
+    int j = i + 1;
+    float f = t - (float)i;
+    float w = smoothstep(0.0, 1.0, f);
+    return lerp(_Palette[i].rgb, _Palette[j].rgb, w);
+}
+
+[numthreads(8, 8, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _Size || id.y >= _Size) return;
+
+    uint face = id.z;
+    float3 dir = CubemapTexelToDir(id.xy, face, _Size);
+
+    // --- Domain-warped macro temperature ------------------------------------
+    float3 p = dir;
+    if (_Warp > 0.0)
+        p = DomainWarp3D(p, _Seed ^ 0xA511E9B3u, _Warp);
+
+    float macro = Fbm3D(p * _MacroFrequency, _Seed,
+                        _MacroOctaves, _MacroLacunarity, _MacroGain);
+    float temp = saturate(macro * 0.5 + 0.5);
+
+    // --- Fine granulation ---------------------------------------------------
+    float gran = Fbm3D(dir * _GranuleFrequency, _Seed ^ 0x0061A75Bu,
+                       _GranuleOctaves, 2.0, 0.5);
+
+    // --- Sunspots -----------------------------------------------------------
+    // Each spot is an ellipse with a soft edge. Spots accumulate via max() so
+    // overlapping spots don't double-darken beyond their individual strength.
+    float spotMask = 0.0;
+    [loop] for (uint i = 0; i < _SpotCount; i++)
+    {
+        SunSpot s = _Spots[i];
+        float3 sc = s.centerRadius.xyz;
+        float majorR = s.centerRadius.w;
+        float minorR = s.params.x;
+        float strength = s.params.y;
+        float softness = max(s.params.z, 0.05);
+        if (majorR <= 1e-4 || minorR <= 1e-4) continue;
+
+        // Quick angular cull.
+        float cosA = clamp(dot(dir, sc), -1.0, 1.0);
+        float angle = acos(cosA);
+        if (angle > majorR * 1.2) continue;
+
+        // Local tangent frame, elliptical distance.
+        float3 rawEast = cross(float3(0.0, 1.0, 0.0), sc);
+        float eLen = length(rawEast);
+        float3 sEast = eLen > 1e-5 ? rawEast / eLen : float3(1.0, 0.0, 0.0);
+        float3 sNorth = cross(sc, sEast);
+
+        float3 delta = dir - sc * dot(dir, sc);
+        float eProj = dot(delta, sEast);
+        float nProj = dot(delta, sNorth);
+
+        float t2 = (eProj * eProj) / (majorR * majorR)
+                 + (nProj * nProj) / (minorR * minorR);
+        float t = sqrt(t2);
+        if (t > 1.05) continue;
+
+        float m = (1.0 - smoothstep(1.0 - softness, 1.0, t)) * strength;
+        spotMask = max(spotMask, m);
+    }
+
+    // Spots drop temperature toward 0 (umbra). The outer penumbra is smooth
+    // because the mask itself is a smoothstep falloff.
+    float tempFinal = saturate(lerp(temp, 0.0, spotMask));
+
+    // --- Color + brightness -------------------------------------------------
+    float3 col = SampleStarPalette(tempFinal);
+    col *= 1.0 + gran * _GranuleContrast;
+
+    // --- Emission -----------------------------------------------------------
+    float emission = saturate(_EmissionFloor
+                              + tempFinal * _EmissionScale
+                              - spotMask * _SpotEmissionDarken);
+
+    _ColorOutput[uint3(id.xy, face)]    = float4(col, 1.0);
+    _EmissionOutput[uint3(id.xy, face)] = float4(emission, emission, emission, 1.0);
+}

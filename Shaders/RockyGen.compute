@@ -1,0 +1,159 @@
+// Rocky / lunar planet generator. Airless body — no oceans, no clouds.
+//
+// The visual signature is driven by:
+//   - Base fBm noise for gentle surface roughness (contributes to height).
+//   - Optional mare (large low-frequency dark plains with flattened relief).
+//   - Optional regolith dust noise (color variation only).
+//   - Optional polar caps.
+//   - A user-supplied tileable detail texture (e.g. real asteroid surface
+//     photo) sampled by triplanar projection — gives the organic feel that
+//     procedural craters never quite achieved. Color-only: does NOT affect
+//     the height/normal pass.
+//
+// Height is packed in the alpha channel (16-bit via ARGBHalf RT) so the
+// shared NormalFromHeight pass can derive a clean normal cubemap.
+
+#pragma kernel CSMain
+
+#include "PlanetNoise.hlsl"
+
+RWTexture2DArray<float4> _ColorOutput;
+
+uint  _Size;
+uint  _Seed;
+
+// Base terrain
+float _BaseFrequency;
+int   _BaseOctaves;
+float _BaseLacunarity;
+float _BaseGain;
+float _BaseAmplitude;
+float _BaseWarp;
+
+// Mare (lunar-style dark plains)
+int   _MareEnabled;
+float _MareFrequency;
+float _MareCoverage;
+float _MareSoftness;
+float _MareFlatten;
+float _MareDepth;
+
+// Regolith dust variation (color only)
+float _DustFrequency;
+float _DustStrength;
+
+// Optional polar caps (useful for Mars-ish looks)
+int   _PolesEnabled;
+float _PoleLatitude;
+float _PoleBlendWidth;
+float _PoleNoiseStrength;
+
+// Detail texture (tileable surface photo, sampled triplanar). Color-only.
+int   _UseDetailMap;
+float _DetailTiling;
+float _DetailOffsetU;
+float _DetailOffsetV;
+float _DetailStrength;
+float _DetailBlendSharpness; // exponent on triplanar weights (higher = harder seam, less crossfade)
+
+Texture2D<float4> _DetailMap;
+SamplerState sampler_DetailMap;
+
+// Height packing range — C# computes safe bounds so the alpha stays in [0,1]
+// while preserving as much dynamic range as possible for the normal pass.
+float _HeightRangeMin;
+float _HeightRangeMax;
+
+// Palette
+float4 _HighlandColor;
+float4 _MareColor;
+float4 _DustColor;
+float4 _PolarColor;
+
+// Triplanar sample of the detail texture on the unit sphere direction. Three
+// planar projections (YZ for X-facing, XZ for Y-facing, XY for Z-facing) are
+// blended by abs(normal) raised to a sharpness exponent. With sharpness ~4
+// the seams between projections are nearly invisible on a sphere.
+float3 SampleDetailTriplanar(float3 dir)
+{
+    float2 off = float2(_DetailOffsetU, _DetailOffsetV);
+
+    float2 uvX = dir.yz * _DetailTiling + off;
+    float2 uvY = dir.xz * _DetailTiling + off;
+    float2 uvZ = dir.xy * _DetailTiling + off;
+
+    float3 cx = _DetailMap.SampleLevel(sampler_DetailMap, uvX, 0).rgb;
+    float3 cy = _DetailMap.SampleLevel(sampler_DetailMap, uvY, 0).rgb;
+    float3 cz = _DetailMap.SampleLevel(sampler_DetailMap, uvZ, 0).rgb;
+
+    float3 w = pow(abs(dir), _DetailBlendSharpness);
+    w /= max(w.x + w.y + w.z, 1e-4);
+
+    return cx * w.x + cy * w.y + cz * w.z;
+}
+
+[numthreads(8, 8, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _Size || id.y >= _Size) return;
+
+    uint face = id.z;
+    float3 dir = CubemapTexelToDir(id.xy, face, _Size);
+
+    // --- Base noise ---------------------------------------------------------
+    float3 wp = dir * _BaseFrequency;
+    if (_BaseWarp > 0.0)
+        wp = DomainWarp3D(wp, _Seed ^ 0xB0BAA55u, _BaseWarp);
+    float baseE = Fbm3D(wp, _Seed, _BaseOctaves, _BaseLacunarity, _BaseGain)
+                * _BaseAmplitude;
+
+    // --- Mare mask ----------------------------------------------------------
+    float mare = 0.0;
+    if (_MareEnabled != 0)
+    {
+        float m = Fbm3D(dir * _MareFrequency, _Seed ^ 0x1AF5E0Du, 4, 2.0, 0.5);
+        m = saturate(m * 0.5 + 0.5);
+        mare = smoothstep(_MareCoverage - _MareSoftness,
+                          _MareCoverage + _MareSoftness, m);
+    }
+
+    // Mare flattens the base and drops it down — creates the smooth dark seas.
+    float elevation = lerp(baseE,
+                           baseE * (1.0 - _MareFlatten) - _MareDepth,
+                           mare);
+
+    // --- Dust / regolith color noise ----------------------------------------
+    float dust = Fbm3D(dir * _DustFrequency, _Seed ^ 0xDEAD0005u, 3, 2.0, 0.5);
+    dust = saturate(dust * 0.5 + 0.5);
+
+    // --- Color --------------------------------------------------------------
+    float3 col = lerp(_HighlandColor.rgb, _MareColor.rgb, mare);
+    col = lerp(col, _DustColor.rgb, dust * _DustStrength);
+
+    // --- Detail texture overlay ---------------------------------------------
+    // Multiplicative blend centered on mid-gray (0.5): texels at 0.5 leave
+    // the base color unchanged, darker texels darken, brighter texels
+    // brighten. _DetailStrength is the opacity of the effect.
+    if (_UseDetailMap != 0 && _DetailStrength > 0.0)
+    {
+        float3 detail = SampleDetailTriplanar(dir);
+        float3 factor = lerp(float3(1,1,1), detail * 2.0, _DetailStrength);
+        col *= factor;
+    }
+
+    // --- Optional poles -----------------------------------------------------
+    if (_PolesEnabled != 0)
+    {
+        float lat = abs(dir.y);
+        float pn = PerlinNoise3D(dir * 6.0, _Seed ^ 0xBEE11CA7u) * _PoleNoiseStrength;
+        float poleT = smoothstep(_PoleLatitude - _PoleBlendWidth + pn,
+                                 _PoleLatitude + pn, lat);
+        col = lerp(col, _PolarColor.rgb, poleT);
+    }
+
+    // --- Pack height into alpha --------------------------------------------
+    float span = max(_HeightRangeMax - _HeightRangeMin, 1e-4);
+    float heightStored = saturate((elevation - _HeightRangeMin) / span);
+
+    _ColorOutput[uint3(id.xy, face)] = float4(col, heightStored);
+}

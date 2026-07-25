@@ -1,0 +1,58 @@
+// Cloud layer cubemap generator. Emits an RGBA per texel: RGB = cloud color,
+// A = density. Strong domain warp on a fBm produces the cyclone / swirl look
+// typical of planetary cloud imagery; a coverage threshold carves the empty
+// sky; softness controls edge sharpness.
+
+#pragma kernel CSMain
+
+#include "PlanetNoise.hlsl"
+
+RWTexture2DArray<float4> _Output;
+
+uint  _Size;
+uint  _Seed;
+
+float _CloudFrequency;
+int   _CloudOctaves;
+float _CloudLacunarity;
+float _CloudGain;
+float _WarpStrength;
+float _Coverage;   // 0..1 — fraction of the sphere covered by clouds
+float _Softness;   // smoothstep half-width at the threshold
+float _DetailStrength;
+
+float4 _CloudColor;
+
+[numthreads(8, 8, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _Size || id.y >= _Size) return;
+
+    uint face = id.z;
+    float3 dir = CubemapTexelToDir(float2(id.xy), face, _Size);
+
+    // Base cloud shape: heavily warped fBm for organic, swirly patterns.
+    float3 p = dir * _CloudFrequency;
+    if (_WarpStrength > 0.0)
+        p = DomainWarp3D(p, _Seed ^ 0xC1011D5Au, _WarpStrength);
+
+    float base = Fbm3D(p, _Seed, _CloudOctaves, _CloudLacunarity, _CloudGain);
+    base = saturate(base * 0.5 + 0.5);
+
+    // A higher-frequency layer modulates density so edges have wispy detail.
+    float detail = Fbm3D(dir * _CloudFrequency * 3.5, _Seed ^ 0x24AF8017u,
+                         max(2, _CloudOctaves - 2), 2.0, 0.5);
+    detail = saturate(detail * 0.5 + 0.5);
+
+    float n = saturate(base + (detail - 0.5) * _DetailStrength);
+
+    // Coverage threshold — n above (1 - coverage) turns into visible cloud.
+    float thresh = 1.0 - _Coverage;
+    float density = smoothstep(thresh - _Softness, thresh + _Softness, n);
+
+    // Multiply residual density by base so the thickest parts are where base
+    // noise was strong, keeping the silky gradation in large cloud masses.
+    density *= saturate(base * 1.2);
+
+    _Output[uint3(id.xy, face)] = float4(_CloudColor.rgb, saturate(density));
+}

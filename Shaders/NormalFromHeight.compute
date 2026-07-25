@@ -1,0 +1,61 @@
+// Second pass: takes a color+height cubemap (height in alpha) and writes an
+// object-space normal cubemap. Finite-difference tangent derivatives computed
+// from 3D positions on the displaced sphere — cross product gives the normal.
+// Output encoded as (n * 0.5 + 0.5) in RGB.
+
+#pragma kernel CSMain
+
+#include "PlanetNoise.hlsl"
+
+TextureCube<float4>    _HeightCube;
+SamplerState           sampler_HeightCube;
+RWTexture2DArray<float4> _NormalOutput;
+
+uint  _Size;
+float _HeightScale;   // fractional displacement relative to radius (e.g. 0.02)
+
+float SampleHeight(float3 dir)
+{
+    // Height was packed in .a, remapped to [0, 1]; restore to [-1, 1] range
+    // for a symmetric displacement around the sphere.
+    float h01 = _HeightCube.SampleLevel(sampler_HeightCube, dir, 0).a;
+    return h01 * 2.0 - 1.0;
+}
+
+float3 Displaced(float3 dir)
+{
+    float h = SampleHeight(dir);
+    return dir * (1.0 + h * _HeightScale);
+}
+
+[numthreads(8, 8, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _Size || id.y >= _Size) return;
+
+    uint face = id.z;
+    float2 t = float2(id.xy);
+
+    // Central differences: sample ±1 texel in each axis for a symmetric, smoother
+    // gradient than a forward diff. CubemapTexelToDir accepts fractional coords.
+    float3 dRp = CubemapTexelToDir(t + float2(1.0,  0.0), face, _Size);
+    float3 dRm = CubemapTexelToDir(t + float2(-1.0, 0.0), face, _Size);
+    float3 dUp = CubemapTexelToDir(t + float2(0.0,  1.0), face, _Size);
+    float3 dUm = CubemapTexelToDir(t + float2(0.0, -1.0), face, _Size);
+
+    float3 pRp = Displaced(dRp);
+    float3 pRm = Displaced(dRm);
+    float3 pUp = Displaced(dUp);
+    float3 pUm = Displaced(dUm);
+
+    // Unity cubemaps follow the DirectX (left-handed) face convention, so on
+    // any face the (right, up) tangents span it such that cross(up, right) —
+    // NOT cross(right, up) — points outward. Example for +X: dir = (1,-v,-u)
+    // gives ∂/∂u = -Z and ∂/∂v = -Y, and cross(-Y, -Z) = +X (outward), whereas
+    // cross(-Z, -Y) = -X (inward). The previous order baked inward normals on
+    // every face, which showed up at runtime as planet lighting flipped 180°
+    // whenever the normal cubemap was enabled.
+    float3 n = normalize(cross(pUp - pUm, pRp - pRm));
+
+    _NormalOutput[uint3(id.xy, face)] = float4(n * 0.5 + 0.5, 1.0);
+}

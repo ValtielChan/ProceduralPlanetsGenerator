@@ -1,0 +1,206 @@
+// Terrestrial planet generator — climate-driven biomes (Whittaker + Hadley).
+//
+// Instead of mapping moisture noise directly to a biome palette (which produces
+// "sprinkled" biomes with no geographic logic), the elevation/colour decision
+// is driven by two physical fields computed per fragment:
+//
+//   Temperature  T ∈ [0,1]   — 1 at equator, 0 at pole, cooler at altitude,
+//                              plus small noise to break perfect bands.
+//   Precipitation P ∈ [0,1]  — Hadley-cell pattern (wet equator, dry at ±30°,
+//                              wet again at ±60°, dry at poles), blended with
+//                              local moisture noise.
+//
+// Land colour is then looked up in a 3×3 Whittaker grid (cold/mild/hot × dry/
+// mid/wet), with bilinear interpolation between cells for smooth biome
+// transitions. Snow on land is driven by temperature, so high mountains at
+// the equator get caps (Kilimanjaro effect) just like polar lowlands.
+//
+// Height is packed in the alpha channel (ARGBHalf) for the shared
+// NormalFromHeight pass.
+
+#pragma kernel CSMain
+
+#include "PlanetNoise.hlsl"
+
+#define PI 3.14159265359
+
+RWTexture2DArray<float4> _ColorOutput;
+
+uint  _Size;
+uint  _Seed;
+
+// Continent / elevation
+float _ContinentFrequency;
+int   _ContinentOctaves;
+float _ContinentLacunarity;
+float _ContinentGain;
+float _WarpStrength;
+float _SeaLevel;
+float _ElevationAmplitude;
+float _MountainStrength;
+float _MountainStart;
+float _MountainFull;
+float _BiomeContrast;        // tanh-shaping on the elevation fBm
+
+// Moisture (local variation)
+float _MoistureFrequency;
+int   _MoistureOctaves;
+
+// Climate model
+float _AltitudeCooling;      // how much temperature drops with elevation above sea
+float _TempNoiseFreq;        // small noise to break perfect latitude bands
+float _TempNoiseStrength;
+float _HadleyStrength;       // weight of latitude-driven precipitation vs noise
+float _SnowTempThreshold;    // T below this → land turns to snow
+float _SnowTempBlend;        // width of snow band
+
+// Optional polar override (white ice cap on top of climate-driven biomes)
+int   _PolesEnabled;
+float _PoleLatitude;
+float _PoleBlendWidth;
+float _PoleNoiseStrength;
+
+// Biome palette (3×3 Whittaker grid + extras)
+// Grid layout (index = 3 * tempBand + precipBand):
+//   0=cold-dry → tundra        1=cold-mid → tundra        2=cold-wet → taiga
+//   3=mild-dry → cold desert   4=mild-mid → grass         5=mild-wet → forest
+//   6=hot-dry  → hot desert    7=hot-mid  → savanna       8=hot-wet  → jungle
+float4 _BiomeGrid[9];
+
+float4 _OceanDeepColor;
+float4 _OceanShallowColor;
+float4 _BeachColor;
+float4 _MountainColor;
+float4 _SnowColor;
+float4 _PolarColor;
+
+float SStep(float a, float b, float x) { return smoothstep(a, b, x); }
+
+// Hadley-cell precipitation pattern. lat01 = |dir.y| ∈ [0,1].
+// cos(3π·lat) gives peaks at 0° (equator) and ~60°, troughs at ~30° and 90°
+// (poles). Envelope dampens the polar peak so high lats are net drier on
+// average — matches real Earth average annual precipitation by latitude.
+float HadleyPrecipitation(float lat01)
+{
+    float wave     = 0.5 + 0.5 * cos(3.0 * lat01 * PI);
+    float envelope = 1.0 - 0.55 * lat01;
+    return saturate(wave * envelope + 0.05);
+}
+
+// Bilinear interpolation across the 3×3 Whittaker grid. T and P in [0,1].
+// Maps to fractional indices in [0,2] and lerps between the four surrounding
+// cells — gives smooth biome transitions instead of hard category jumps.
+float3 SampleWhittaker(float T, float P)
+{
+    float tIdx = saturate(T) * 2.0;
+    float pIdx = saturate(P) * 2.0;
+    int t0 = clamp((int)floor(tIdx), 0, 1);
+    int p0 = clamp((int)floor(pIdx), 0, 1);
+    float tf = saturate(tIdx - t0);
+    float pf = saturate(pIdx - p0);
+
+    float3 c00 = _BiomeGrid[3 * t0       + p0    ].rgb;
+    float3 c01 = _BiomeGrid[3 * t0       + p0 + 1].rgb;
+    float3 c10 = _BiomeGrid[3 * (t0 + 1) + p0    ].rgb;
+    float3 c11 = _BiomeGrid[3 * (t0 + 1) + p0 + 1].rgb;
+
+    return lerp(lerp(c00, c01, pf), lerp(c10, c11, pf), tf);
+}
+
+[numthreads(8, 8, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _Size || id.y >= _Size) return;
+
+    uint face = id.z;
+    float3 dir = CubemapTexelToDir(id.xy, face, _Size);
+
+    // --- Elevation ---------------------------------------------------------
+    float3 wp = dir * _ContinentFrequency;
+    if (_WarpStrength > 0.0)
+        wp = DomainWarp3D(wp, _Seed ^ 0xA511E9B3u, _WarpStrength);
+
+    float rawE  = Fbm3D(wp, _Seed, _ContinentOctaves, _ContinentLacunarity, _ContinentGain);
+    float baseE = tanh(rawE * _BiomeContrast) * _ElevationAmplitude;
+
+    float ridge = RidgeFbm3D(wp * 1.8, _Seed ^ 0x51BADC0Du,
+                             _ContinentOctaves, 2.0, 0.5);
+    float aboveSea = max(0.0, baseE - _SeaLevel);
+    float mountainMask = smoothstep(_MountainStart, _MountainFull, aboveSea);
+    float elevation = baseE + ridge * _MountainStrength * mountainMask;
+
+    float peakE = _ElevationAmplitude + _MountainStrength;
+    float minE  = -_ElevationAmplitude;
+
+    // --- Climate fields ----------------------------------------------------
+    float lat01 = saturate(abs(dir.y));   // 0 = equator, 1 = pole
+
+    // Temperature: hot equator → cold pole, minus altitude cooling, plus
+    // small noise so bands aren't perfectly straight at the texel scale.
+    float landElev = max(0.0, elevation - _SeaLevel);
+    float T_lat    = 1.0 - lat01;
+    float T_alt    = T_lat - landElev * _AltitudeCooling;
+    float tempN    = PerlinNoise3D(dir * _TempNoiseFreq, _Seed ^ 0x73A41C0Du)
+                   * _TempNoiseStrength;
+    float T = saturate(T_alt + tempN);
+
+    // Precipitation: Hadley pattern blended with local moisture noise.
+    float rawM = Fbm3D(dir * _MoistureFrequency, _Seed ^ 0x7A5C91EFu,
+                       _MoistureOctaves, 2.0, 0.5);
+    float moisture = saturate(tanh(rawM * _BiomeContrast) * 0.5 + 0.5);
+
+    float P_hadley = HadleyPrecipitation(lat01);
+    float P = saturate(lerp(moisture, P_hadley, saturate(_HadleyStrength)));
+
+    // --- Colour decision ---------------------------------------------------
+    float3 color;
+
+    if (elevation < _SeaLevel)
+    {
+        // Ocean: smoothstep on depth so the deep colour is visible at moderate
+        // depths (raw lerp would only show deep at depth ≈ 1).
+        float depthRaw = saturate((_SeaLevel - elevation) / max(_SeaLevel - minE, 1e-4));
+        float depthT   = SStep(0.10, 0.55, depthRaw);
+        color = lerp(_OceanShallowColor.rgb, _OceanDeepColor.rgb, depthT);
+    }
+    else
+    {
+        // Land: bilinear Whittaker lookup driven by (T, P).
+        float3 biome = SampleWhittaker(T, P);
+
+        // Beach at shoreline.
+        float land = saturate((elevation - _SeaLevel) / max(peakE - _SeaLevel, 1e-4));
+        float beachT = SStep(0.04, 0.0, land);
+        color = lerp(biome, _BeachColor.rgb, beachT);
+
+        // Mountain rock band — kept on elevation rather than temperature so the
+        // rocky look still appears even in warm zones; snow on top is what
+        // signals the cold mountain tops via the T-based snow pass below.
+        color = lerp(color, _MountainColor.rgb, SStep(0.38, 0.52, land));
+
+        // Temperature-driven snow on land: any cold enough fragment turns
+        // white, regardless of latitude. Combined with altitude cooling,
+        // this naturally gives snowy peaks at all latitudes (Kilimanjaro at
+        // the equator, Andes in the tropics, etc.) without a separate
+        // altitude check.
+        float snowMask = SStep(_SnowTempThreshold + _SnowTempBlend,
+                               _SnowTempThreshold - _SnowTempBlend, T);
+        color = lerp(color, _SnowColor.rgb, snowMask);
+    }
+
+    // --- Optional polar cap override ---------------------------------------
+    // Independent from the climate-driven snow so the user can still force a
+    // dramatic white cap at very high latitudes with a noisy edge.
+    if (_PolesEnabled != 0)
+    {
+        float pn = PerlinNoise3D(dir * 6.0, _Seed ^ 0xBEE11CA7u) * _PoleNoiseStrength;
+        float poleT = SStep(_PoleLatitude - _PoleBlendWidth + pn,
+                            _PoleLatitude + pn, lat01);
+        color = lerp(color, _PolarColor.rgb, poleT);
+    }
+
+    // --- Pack height into alpha -------------------------------------------
+    float fullSpan = max(peakE - minE, 1e-4);
+    float heightStored = saturate((elevation - minE) / fullSpan);
+    _ColorOutput[uint3(id.xy, face)] = float4(color, heightStored);
+}
