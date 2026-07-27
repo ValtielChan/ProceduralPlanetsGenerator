@@ -2,7 +2,8 @@
     "name": "Valtiel.PlanetGenerator.Editor",
     "rootNamespace": "Valtiel.PlanetGenerator.Editor",
     "references": [
-        "Valtiel.PlanetGenerator.Runtime"
+        "Valtiel.PlanetGenerator.Runtime",
+        "Galaxy.Runtime"
     ],
     "includePlatforms": [
         "Editor"

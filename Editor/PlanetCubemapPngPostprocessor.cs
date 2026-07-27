@@ -4,7 +4,7 @@ using UnityEditor;
 namespace Valtiel.PlanetGenerator.Editor
 {
     // Forces PNGs exported by PlanetGeneratorWindow under
-    // Assets/Procedural Planets Generator/Library/{Name}/Textures/ to be imported as
+    // Assets/Galaxy/PlanetGenerator/Library/{Name}/Textures/ to be imported as
     // Cubemap (4:3 cross layout) on first import. Once imported, the user is
     // free to tweak mipmap/filter/size/compression on the PNG asset directly —
     // the material references the PNG itself, so any change propagates.
@@ -13,7 +13,9 @@ namespace Valtiel.PlanetGenerator.Editor
     // importer stick (importSettingsMissing == false).
     public sealed class PlanetCubemapPngPostprocessor : AssetPostprocessor
     {
-        const string LibraryRoot = "Assets/Procedural Planets Generator/Library/";
+        // Must match PlanetGeneratorWindow.LibraryRoot (planets-integration
+        // branch exports into the host project's library).
+        const string LibraryRoot = "Assets/Galaxy/PlanetGenerator/Library/";
 
         void OnPreprocessTexture()
         {

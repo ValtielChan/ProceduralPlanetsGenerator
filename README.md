@@ -5,6 +5,16 @@ Each planet ships as a self-contained set of cubemap PNGs, materials, and a
 ready-to-drop prefab. No runtime cost — generation happens once, you keep the
 result as a regular asset.
 
+> **Branch note — `planets-integration`.** This branch is specific to the
+> Planets (Galaxy) project: preview and export target the project's production
+> shaders (`Galaxy/CelestialBody`, `Galaxy/CelestialBodyClouds`, `Galaxy/Star`)
+> instead of the asset's generic `Valtiel/Planet/*` shaders, cosmic uniforms
+> (`_StarOffset`, `_StarColor`, `_BodyRadius`, occluders) are faux-fed in the
+> editor preview, exported prefabs carry a `CelestialBodyView`, and exports
+> land in `Assets/Galaxy/PlanetGenerator/Library`. The editor asmdef references
+> `Galaxy.Runtime` — this branch does not compile outside the Planets project.
+> Shader references below describe the generic `main` branch behaviour.
+
 ## Requirements
 
 - Unity **6000.0.61f1** (Unity 6.0 LTS) or later — this is the version the

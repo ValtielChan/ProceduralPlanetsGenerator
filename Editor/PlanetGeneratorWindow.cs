@@ -3,6 +3,8 @@ using System.IO;
 using System.Runtime.InteropServices;
 using Valtiel.PlanetGenerator.Generation;
 using Valtiel.PlanetGenerator.Generation.Cpu;
+using Galaxy.Generation.Stars;
+using Galaxy.Rendering;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -23,10 +25,14 @@ namespace Valtiel.PlanetGenerator.Editor
     // Tex2DArray RT (one slice per face); we then copy each slice into a Cube
     // RT that the preview material samples by object-space normal.
     //
-    // The preview material uses the asset's production shaders
-    // (Valtiel/Planet/Surface, .../Clouds, .../Star), so the preview is
-    // lit by the scene's directional light, additional lights, fog, and SH
-    // probe — what you see is what you get when the prefab is dropped.
+    // The preview material uses the project's production shaders
+    // (Galaxy/CelestialBody, Galaxy/CelestialBodyClouds, Galaxy/Star). Those
+    // shaders compute their own Lambert + eclipse from cosmic uniforms
+    // (_StarOffset, _StarColor, _BodyRadius, occluders) normally written by
+    // CelestialBodyView/SceneBootstrap — neither exists in the editor preview,
+    // so the window faux-feeds them: "star" at lightDir × 1e9 m, radius 1,
+    // no occluders. What you see is what the prefab renders at runtime
+    // (modulo the scene's SH ambient probe).
     public class PlanetGeneratorWindow : EditorWindow
     {
         const string PreviewObjectName     = "__PlanetGenerator_Preview";
@@ -41,12 +47,21 @@ namespace Valtiel.PlanetGenerator.Editor
         const string NormalComputePath     = ShadersRoot + "/NormalFromHeight.compute";
         const string CloudsComputePath     = ShadersRoot + "/CloudsGen.compute";
 
-        const string SurfaceShaderName = "Valtiel/Planet/Surface";
-        const string CloudsShaderName  = "Valtiel/Planet/Clouds";
-        const string StarShaderName    = "Valtiel/Planet/Star";
+        // Planets-integration branch: preview and export target the project's
+        // production shaders (Galaxy/*) instead of the asset's generic URP
+        // shaders. Property and keyword names are shared between the two
+        // families, so all the binding code below works unchanged.
+        const string SurfaceShaderName = "Galaxy/CelestialBody";
+        const string CloudsShaderName  = "Galaxy/CelestialBodyClouds";
+        const string StarShaderName    = "Galaxy/Star";
 
         [SerializeField] PlanetGenMode mode = PlanetGenMode.Terrestrial;
         [SerializeField] GenerationBackend backend = GenerationBackend.GPU;
+
+        // Preview lighting — direction of the faux star fed to the cosmic
+        // uniforms (the Galaxy shaders ignore scene lights entirely).
+        [SerializeField] Vector3 lightDir = new(0.3f, 0.4f, -0.8f);
+        [SerializeField] float ambientFloor = 0.12f;
         [SerializeField] int lodSubdivisions = 32;
         [SerializeField] int cubemapSize = 512;
         [SerializeField] int  seed = 1;
@@ -370,10 +385,12 @@ namespace Valtiel.PlanetGenerator.Editor
             else if (mode == PlanetGenMode.GasGiant) DrawGasGiantUI();
             else if (mode == PlanetGenMode.Star) DrawStarUI();
 
-            EditorGUILayout.HelpBox(
-                "Preview is lit by the active scene's directional light and ambient.\n" +
-                "Add a Directional Light to your scene for the best preview.",
-                MessageType.None);
+            GUILayout.Space(6);
+            GUILayout.Label("Preview Lighting", EditorStyles.boldLabel);
+            lightDir = EditorGUILayout.Vector3Field(new GUIContent("Light Dir",
+                "Direction of the faux star fed to the Galaxy shaders' cosmic " +
+                "uniforms. Scene lights are ignored by these shaders."), lightDir);
+            ambientFloor = EditorGUILayout.Slider("Ambient Floor", ambientFloor, 0f, 0.5f);
 
             bool changed = EditorGUI.EndChangeCheck();
 
@@ -989,8 +1006,10 @@ namespace Valtiel.PlanetGenerator.Editor
                     SetToggleKeyword(previewMaterial, "_UseNormalCube", "_USE_NORMAL_CUBE", hasNormal);
                     SetToggleKeyword(previewMaterial, "_UseCloudCube",  "_USE_CLOUD_CUBE",  hasClouds);
                     previewMaterial.SetColor("_BaseColor",           Color.white);
+                    previewMaterial.SetFloat("_AmbientFloor",        ambientFloor);
                     previewMaterial.SetFloat("_CloudShadowStrength", cloudShadowStrength);
                     previewMaterial.SetFloat("_CloudParallax",       cloudParallax);
+                    ApplyCosmicPreviewUniforms(previewMaterial);
 
                     // Detail normal is rocky-only for now; for other modes we
                     // explicitly disable the keyword so a previous rocky preview
@@ -1014,6 +1033,7 @@ namespace Valtiel.PlanetGenerator.Editor
                 cloudMaterial.SetColor("_CloudTint",   cloudColor);
                 cloudMaterial.SetFloat("_Density",     cloudDensity);
                 cloudMaterial.SetFloat("_AmbientFloor", cloudAmbient);
+                ApplyCosmicPreviewUniforms(cloudMaterial);
             }
 
             SceneView.RepaintAll();
@@ -1089,8 +1109,10 @@ namespace Valtiel.PlanetGenerator.Editor
                     SetToggleKeyword(previewMaterial, "_UseNormalCube", "_USE_NORMAL_CUBE", hasNormal);
                     SetToggleKeyword(previewMaterial, "_UseCloudCube",  "_USE_CLOUD_CUBE",  hasClouds);
                     previewMaterial.SetColor("_BaseColor",           Color.white);
+                    previewMaterial.SetFloat("_AmbientFloor",        ambientFloor);
                     previewMaterial.SetFloat("_CloudShadowStrength", cloudShadowStrength);
                     previewMaterial.SetFloat("_CloudParallax",       cloudParallax);
+                    ApplyCosmicPreviewUniforms(previewMaterial);
 
                     bool detailNormalActive = mode == PlanetGenMode.Rocky
                         && rkDetailNormalEnabled && rkDetailNormalMap != null;
@@ -1110,6 +1132,7 @@ namespace Valtiel.PlanetGenerator.Editor
                 cloudMaterial.SetColor("_CloudTint",   cloudColor);
                 cloudMaterial.SetFloat("_Density",     cloudDensity);
                 cloudMaterial.SetFloat("_AmbientFloor", cloudAmbient);
+                ApplyCosmicPreviewUniforms(cloudMaterial);
             }
 
             SceneView.RepaintAll();
@@ -1150,8 +1173,11 @@ namespace Valtiel.PlanetGenerator.Editor
 
         // --- Save / Load -----------------------------------------------------
 
-        const string LibraryRoot      = "Assets/Procedural Planets Generator/Library";
-        const string SharedMeshFolder = "Assets/Procedural Planets Generator/Meshes";
+        // Exports land in the host project's library, not inside the asset
+        // folder — the generated planets belong to the game, and the shared
+        // LOD meshes there are reused by all previously exported prefabs.
+        const string LibraryRoot      = "Assets/Galaxy/PlanetGenerator/Library";
+        const string SharedMeshFolder = "Assets/Galaxy/PlanetGenerator/Meshes";
 
         TerrestrialPlanetConfig ExportConfig() => new TerrestrialPlanetConfig
         {
@@ -2318,6 +2344,24 @@ namespace Valtiel.PlanetGenerator.Editor
             else mat.DisableKeyword(keyword);
         }
 
+        // Feeds the cosmic uniforms normally written by CelestialBodyView so the
+        // production Galaxy shaders can render standalone in the editor preview.
+        // The "star" is a point at lightDir × 1e9 — the shader normalizes toStar,
+        // so only the direction matters. BodyRadius = 1 matches the preview mesh
+        // (QuadSphere built at radius 1.0, unit scale).
+        void ApplyCosmicPreviewUniforms(Material mat)
+        {
+            var sunPos = lightDir.normalized * 1.0e9f;
+            mat.SetVector("_StarOffset",     new Vector4(sunPos.x, sunPos.y, sunPos.z, 0f));
+            mat.SetColor ("_StarColor",      Color.white);
+            mat.SetFloat ("_BodyRadius",     1.0f);
+            mat.SetFloat ("_OccluderCount",  0f);
+            mat.SetVector("_Occluder0Offset", Vector4.zero);
+            mat.SetFloat ("_Occluder0Radius", 1f);
+            mat.SetVector("_Occluder1Offset", Vector4.zero);
+            mat.SetFloat ("_Occluder1Radius", 1f);
+        }
+
         // Push the rocky detail-normal params onto a material. Always sets the
         // shared mapping uniforms (tiling/offset/sharpness) so they're in a
         // known state, then toggles the _USE_DETAIL_NORMAL keyword based on
@@ -2336,8 +2380,10 @@ namespace Valtiel.PlanetGenerator.Editor
 
         // Builds the runtime prefab: MeshFilter+MeshRenderer for the body, an
         // optional child Clouds sphere scaled by cloudAltitude, optional LOD1/LOD2
-        // children + a LODGroup. No custom components — drop the prefab into any
-        // URP scene with a directional light and it just renders.
+        // children + a LODGroup, and a CelestialBodyView so SceneBootstrap picks
+        // the body up and drives the Galaxy shaders' cosmic uniforms. The user
+        // edits the galactic position/radius per-instance after dropping the
+        // prefab into a scene.
         GameObject BuildPlanetPrefab(string name, Mesh[] lodMeshes, Material bodyMat, Material cloudMat)
         {
             var root = new GameObject(name);
@@ -2391,7 +2437,28 @@ namespace Valtiel.PlanetGenerator.Editor
                 lodGroup.RecalculateBounds();
             }
 
+            var view = root.AddComponent<CelestialBodyView>();
+            InitialiseViewDefaults(view, name, mode == PlanetGenMode.Star);
+
             return root;
+        }
+
+        // Serialized defaults for the exported CelestialBodyView. Planets get
+        // Earth-ish values (1 AU out on X, Earth radius); stars sit at the
+        // system origin with Sun radius and a luminous output. All of it is
+        // meant to be edited per-instance in the scene afterwards.
+        static void InitialiseViewDefaults(CelestialBodyView view, string bodyName, bool isStar)
+        {
+            var so = new SerializedObject(view);
+            var p = so.FindProperty("bodyName");       if (p != null) p.stringValue = bodyName;
+            p = so.FindProperty("kind");               if (p != null) p.enumValueIndex = (int)(isStar ? CelestialBodyKind.Star : CelestialBodyKind.Planet);
+            p = so.FindProperty("galacticX");          if (p != null) p.doubleValue = isStar ? 0.0 : 1.495978707e11;
+            p = so.FindProperty("galacticY");          if (p != null) p.doubleValue = 0.0;
+            p = so.FindProperty("galacticZ");          if (p != null) p.doubleValue = 0.0;
+            p = so.FindProperty("radiusMeters");       if (p != null) p.doubleValue = isStar ? 6.9634e8 : 6.371e6;
+            p = so.FindProperty("lightingColor");      if (p != null) p.colorValue = Color.white;
+            p = so.FindProperty("starLuminosity");     if (p != null) p.doubleValue = isStar ? 3.0 : 0.0;
+            so.ApplyModifiedPropertiesWithoutUndo();
         }
 
         void LoadPlanet()
