@@ -20,11 +20,17 @@ result as a regular asset.
 exported as a drop-in LOD prefab — terrestrial, rocky, gas giant, star.</sub>
 
 <p align="center">
-  <img src="Documentation/images/terrestrial-sealevel.gif" width="55%" alt="Sweeping the Sea Level slider floods and drains the same terrain">
+  <img src="Documentation/images/terrestrial-sealevel.gif" width="42%" alt="Terrestrial — Sea Level">
+  <img src="Documentation/images/rocky-relief.gif" width="42%" alt="Rocky — Relief / crater depth">
+</p>
+<p align="center">
+  <img src="Documentation/images/gasgiant-bands.gif" width="42%" alt="Gas Giant — number of latitude bands">
+  <img src="Documentation/images/star-sunspots.gif" width="42%" alt="Star — sunspot size">
 </p>
 
-<sub>Every slider re-bakes the preview live — here the **Sea Level** knob on one
-terrestrial planet, same seed throughout.</sub>
+<sub>Every slider re-bakes the preview live. Clockwise from top-left:
+**Sea Level**, **Relief**, **Sunspot Size**, **Band Count** — one preset per
+body type, seed fixed throughout each sweep.</sub>
 
 ## Requirements
 
