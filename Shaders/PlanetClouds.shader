@@ -31,6 +31,11 @@ Shader "Valtiel/Planet/Clouds"
 
             Blend SrcAlpha OneMinusSrcAlpha
             ZWrite Off
+            // Polygon offset pulls the cloud shell's depth toward the camera so
+            // it reliably wins the ZTest against the planet surface. Lets the
+            // shell sit arbitrarily close (tiny Altitude) without the two
+            // faceted spheres z-fighting into a mottled mess.
+            Offset -1, -1
             Cull Back
 
             HLSLPROGRAM

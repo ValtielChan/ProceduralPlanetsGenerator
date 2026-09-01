@@ -26,9 +26,17 @@ Shader "Valtiel/Planet/Surface"
         _BaseColor ("Base Color",      Color) = (1,1,1,1)
 
         [Header(Shading)]
-        _Smoothness    ("Smoothness",    Range(0,1))   = 0.2
-        _SpecularPower ("Specular Power", Range(1,256)) = 32
+        _Smoothness    ("Land Smoothness", Range(0,1))   = 0.0
+        _SpecularPower ("Land Specular Power", Range(1,256)) = 32
         _AmbientFloor  ("Ambient Floor", Range(0,0.3)) = 0.02
+
+        [Header(Water Specular (terrestrial))]
+        // Specular that only shows on ocean fragments. Water = packed terrain
+        // height in _BaseCube.a below _WaterLevel; ~0.49 lines up with the
+        // shoreline at the default Sea Level. Land keeps _Smoothness (0 = matte).
+        _WaterSpecular      ("Water Specular",       Range(0,1))   = 1.0
+        _WaterSpecularPower ("Water Specular Power", Range(1,512)) = 19
+        _WaterLevel         ("Water Level (packed height)", Range(0,1)) = 0.49
 
         [Header(Normal Cubemap)]
         _NormalCube ("Normal Cubemap", Cube) = "" {}
@@ -97,6 +105,9 @@ Shader "Valtiel/Planet/Surface"
                 float  _Smoothness;
                 float  _SpecularPower;
                 float  _AmbientFloor;
+                float  _WaterSpecular;
+                float  _WaterSpecularPower;
+                float  _WaterLevel;
                 float  _NormalStrength;
                 float  _DetailNormalStrength;
                 float  _DetailTiling;
@@ -156,13 +167,15 @@ Shader "Valtiel/Planet/Surface"
                 return output;
             }
 
-            // Standard Blinn-Phong specular term, driven by smoothness. Kept
-            // optional via _Smoothness — set to 0 for a fully matte planet.
-            half3 PlanetSpecular(float3 normalWS, float3 viewWS, float3 lightDirWS, half3 lightColor)
+            // Standard Blinn-Phong specular term. power/strength are passed in
+            // so land and water can use different lobes — set strength to 0 for
+            // a fully matte surface.
+            half3 PlanetSpecular(float3 normalWS, float3 viewWS, float3 lightDirWS, half3 lightColor,
+                                 float power, float strength)
             {
                 float3 h = normalize(lightDirWS + viewWS);
                 float ndh = saturate(dot(normalWS, h));
-                float spec = pow(ndh, _SpecularPower) * _Smoothness;
+                float spec = pow(ndh, power) * strength;
                 return lightColor * spec;
             }
 
@@ -173,12 +186,22 @@ Shader "Valtiel/Planet/Surface"
 
                 float3 normalOS = normalize(input.normalOS);
 
-                // Albedo: cubemap by direction, or 2D fallback.
+                // Albedo: cubemap by direction, or 2D fallback. The base cube's
+                // alpha carries packed terrain height (0..1); used below to
+                // mask water-only specular. No height data (2D path) => 1 => land.
                 #if defined(_USE_BASE_CUBE)
-                    half3 albedo = SAMPLE_TEXTURECUBE(_BaseCube, sampler_BaseCube, normalOS).rgb * _BaseColor.rgb;
+                    half4 baseSample = SAMPLE_TEXTURECUBE(_BaseCube, sampler_BaseCube, normalOS);
+                    half3 albedo = baseSample.rgb * _BaseColor.rgb;
+                    half  packedHeight = baseSample.a;
                 #else
                     half3 albedo = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv).rgb * _BaseColor.rgb;
+                    half  packedHeight = 1.0h;
                 #endif
+
+                // 1 on ocean fragments, 0 on land, narrow blend at the shoreline.
+                half waterMask = 1.0h - smoothstep(_WaterLevel - 0.004, _WaterLevel + 0.004, packedHeight);
+                float specPower    = lerp(_SpecularPower, _WaterSpecularPower, waterMask);
+                float specStrength = lerp(_Smoothness,    _WaterSpecular,      waterMask);
 
                 // Shading normal: start from the geometric outward (normalOS),
                 // optionally perturb by the height-derived cubemap normal
@@ -238,7 +261,7 @@ Shader "Valtiel/Planet/Surface"
                 float ndl = saturate(dot(normalWS, mainLight.direction));
                 half3 mainColor  = mainLight.color * mainLight.distanceAttenuation * mainLight.shadowAttenuation;
                 half3 mainDirect = albedo * mainColor * ndl;
-                half3 mainSpec   = PlanetSpecular(normalWS, viewWS, mainLight.direction, mainColor) * ndl;
+                half3 mainSpec   = PlanetSpecular(normalWS, viewWS, mainLight.direction, mainColor, specPower, specStrength) * ndl;
 
                 // Cloud parallax shadow on the main light only — shift the
                 // sample direction toward the sun by cloudParallax×altitude.

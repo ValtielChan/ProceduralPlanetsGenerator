@@ -23,80 +23,87 @@ namespace Valtiel.PlanetGenerator.Generation
     {
         public string planetType = "terrestrial";
 
+        // Defaults are the saved "Earth" preset (Library/Earth/params.json)
+        // so a fresh install / reset lands on an Earth-like planet.
         public string name = "Planet";
         public int   seed = 1;
-        public int   cubemapSize = 512;
+        public int   cubemapSize = 1024;
 
         // Continents
-        public float continentFrequency  = 1.5f;
-        public int   continentOctaves    = 6;
-        public float continentLacunarity = 2.0f;
-        public float continentGain       = 0.5f;
-        public float warpStrength        = 0.8f;
-        public float seaLevel            = -0.05f;
-        public float elevationAmplitude  = 1.5f;
-        public float mountainStrength    = 0.8f;
-        public float mountainStart       = 0.15f;
-        public float mountainFull        = 0.55f;
+        public float continentFrequency  = 0.93f;
+        public int   continentOctaves    = 8;
+        public float continentLacunarity = 2.18f;
+        public float continentGain       = 0.608f;
+        public float warpStrength        = 0.0f;
+        public float seaLevel            = 0.195f;
+        public float elevationAmplitude  = 1.11f;
+        public float mountainStrength    = 0.55f;
+        public float mountainStart       = 0.0f;
+        public float mountainFull        = 0.68f;
 
         // Histogram shaping applied to both elevation and moisture fBm before
         // scaling. 1.0 = raw (cluster around 0, deep ocean / mountains / snow
         // rarely visible), 2.5 = balanced spread (default), 4+ = aggressive
         // bimodal distribution.
-        public float biomeContrast       = 2.5f;
+        public float biomeContrast       = 3.1f;
 
         // Moisture
-        public float moistureFrequency = 2.5f;
-        public int   moistureOctaves   = 4;
+        public float moistureFrequency = 6.37f;
+        public int   moistureOctaves   = 8;
 
         // Poles (optional white-cap override on top of climate-driven biomes)
         public bool  polesEnabled      = true;
-        public float poleLatitude      = 0.78f;
-        public float poleBlendWidth    = 0.12f;
-        public float poleNoiseStrength = 0.05f;
+        public float poleLatitude      = 0.929f;
+        public float poleBlendWidth    = 0.143f;
+        public float poleNoiseStrength = 0.1112f;
 
         // Relief
-        public float heightScale = 0.025f;
+        public float heightScale = 0.0086f;
 
         // Climate model (Hadley circulation + altitude lapse rate).
-        public float altitudeCooling   = 0.55f;  // T loss per unit elevation above sea
-        public float tempNoiseFreq     = 4.0f;   // small scale, breaks perfect latitude bands
-        public float tempNoiseStrength = 0.06f;
-        public float hadleyStrength    = 0.7f;   // 0 = pure moisture noise, 1 = pure latitude pattern
-        public float snowTempThreshold = 0.22f;  // T below this turns land to snow
-        public float snowTempBlend     = 0.06f;  // softness of the snow transition
+        public float altitudeCooling   = 0.263f;  // T loss per unit elevation above sea
+        public float tempNoiseFreq     = 16.0f;   // small scale, breaks perfect latitude bands
+        public float tempNoiseStrength = 0.2f;
+        public float hadleyStrength    = 0.593f;  // 0 = pure moisture noise, 1 = pure latitude pattern
+        public float snowTempThreshold = 0.2f;    // T below this turns land to snow
+        public float snowTempBlend     = 0.1209f; // softness of the snow transition
+
+        // Water-only specular (body material): sheen on ocean, land matte.
+        public float waterSpecular      = 1f;      // 0 = off
+        public float waterSpecularPower = 19f;     // Blinn-Phong exponent
+        public float waterLevel         = 0.49f;   // packed-height cutoff for "is water"
 
         // Biome palette — Whittaker 3×3 grid (cold/mild/hot × dry/mid/wet)
         // shares 7 distinct colours plus oceans, beach, mountain, snow, polar.
-        public Color oceanDeep    = new(0.01f, 0.06f, 0.18f, 1f);
-        public Color oceanShallow = new(0.10f, 0.32f, 0.55f, 1f);
-        public Color beach        = new(0.78f, 0.72f, 0.50f, 1f);
-        public Color tundra       = new(0.55f, 0.55f, 0.45f, 1f);  // cold, dry/mid
-        public Color taiga        = new(0.18f, 0.30f, 0.20f, 1f);  // cold, wet — boreal forest
-        public Color desert       = new(0.85f, 0.72f, 0.42f, 1f);  // hot, dry
-        public Color grass        = new(0.40f, 0.60f, 0.25f, 1f);  // mild, mid
-        public Color forest       = new(0.12f, 0.32f, 0.12f, 1f);  // mild, wet — temperate
-        public Color savanna      = new(0.72f, 0.70f, 0.32f, 1f);  // hot, mid
-        public Color jungle       = new(0.06f, 0.30f, 0.08f, 1f);  // hot, wet — tropical rainforest
-        public Color mountain     = new(0.42f, 0.38f, 0.33f, 1f);
-        public Color snow         = new(0.95f, 0.95f, 0.98f, 1f);
+        public Color oceanDeep    = new(0.00392f, 0.01569f, 0.07451f, 1f);
+        public Color oceanShallow = new(0.07451f, 0.19608f, 0.39608f, 1f);
+        public Color beach        = new(0.47170f, 0.38870f, 0.25587f, 1f);
+        public Color tundra       = new(0.19216f, 0.20392f, 0.11373f, 1f);  // cold, dry/mid
+        public Color taiga        = new(0.10196f, 0.14902f, 0.05490f, 1f);  // cold, wet — boreal forest
+        public Color desert       = new(0.77255f, 0.68235f, 0.53725f, 1f);  // hot, dry
+        public Color grass        = new(0.15686f, 0.23922f, 0.07843f, 1f);  // mild, mid
+        public Color forest       = new(0.09020f, 0.14118f, 0.03922f, 1f);  // mild, wet — temperate
+        public Color savanna      = new(0.52549f, 0.44706f, 0.30980f, 1f);  // hot, mid
+        public Color jungle       = new(0.14510f, 0.20000f, 0.06275f, 1f);  // hot, wet — tropical rainforest
+        public Color mountain     = new(0.54118f, 0.52157f, 0.46667f, 1f);
+        public Color snow         = new(1.00f, 1.00f, 1.00f, 1f);
         public Color polar        = new(0.92f, 0.94f, 0.98f, 1f);
 
         // Clouds
         public bool  cloudsEnabled        = true;
-        public float cloudAltitude        = 0.012f;
-        public float cloudFrequency       = 2.2f;
-        public int   cloudOctaves         = 6;
-        public float cloudLacunarity      = 2.1f;
-        public float cloudGain            = 0.55f;
-        public float cloudWarpStrength    = 1.6f;
-        public float cloudCoverage        = 0.45f;
-        public float cloudSoftness        = 0.12f;
-        public float cloudDetailStrength  = 0.35f;
+        public float cloudAltitude        = 0.0128f;
+        public float cloudFrequency       = 4.15f;
+        public int   cloudOctaves         = 7;
+        public float cloudLacunarity      = 3.4f;
+        public float cloudGain            = 0.564f;
+        public float cloudWarpStrength    = 2.04f;
+        public float cloudCoverage        = 0.431f;
+        public float cloudSoftness        = 0.113f;
+        public float cloudDetailStrength  = 0.369f;
         public Color cloudColor           = Color.white;
-        public float cloudDensity         = 1.0f;
-        public float cloudShadowStrength  = 0.55f;
-        public float cloudParallax        = 0.02f;
+        public float cloudDensity         = 1.25f;
+        public float cloudShadowStrength  = 0.725f;
+        public float cloudParallax        = 0.0405f;
         public float cloudAmbient         = 0.04f;
     }
 

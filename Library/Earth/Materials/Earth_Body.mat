@@ -13,6 +13,7 @@ Material:
   m_ModifiedSerializedProperties: 0
   m_ValidKeywords:
   - _USE_BASE_CUBE
+  - _USE_CLOUD_CUBE
   - _USE_NORMAL_CUBE
   m_InvalidKeywords: []
   m_LightmapFlags: 4
@@ -34,7 +35,7 @@ Material:
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _CloudCube:
-        m_Texture: {fileID: 0}
+        m_Texture: {fileID: 8900000, guid: 0559dd329ccef664e9c946826ca9f2ff, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
     - _DetailNormalMap:
@@ -48,8 +49,8 @@ Material:
     m_Ints: []
     m_Floats:
     - _AmbientFloor: 0.02
-    - _CloudParallax: 0.02
-    - _CloudShadowStrength: 0.6
+    - _CloudParallax: 0.0405
+    - _CloudShadowStrength: 0.725
     - _DetailBlendSharpness: 4
     - _DetailNormalStrength: 1
     - _DetailOffsetU: 0
@@ -59,9 +60,12 @@ Material:
     - _Smoothness: 0.2
     - _SpecularPower: 32
     - _UseBaseCube: 1
-    - _UseCloudCube: 0
+    - _UseCloudCube: 1
     - _UseDetailNormal: 0
     - _UseNormalCube: 1
+    - _WaterLevel: 0.49
+    - _WaterSpecular: 1
+    - _WaterSpecularPower: 26
     m_Colors:
     - _BaseColor: {r: 1, g: 1, b: 1, a: 1}
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}

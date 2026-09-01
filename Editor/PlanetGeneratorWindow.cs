@@ -48,7 +48,7 @@ namespace Valtiel.PlanetGenerator.Editor
         [SerializeField] PlanetGenMode mode = PlanetGenMode.Terrestrial;
         [SerializeField] GenerationBackend backend = GenerationBackend.GPU;
         [SerializeField] int lodSubdivisions = 32;
-        [SerializeField] int cubemapSize = 512;
+        [SerializeField] int cubemapSize = 1024;
         [SerializeField] int  seed = 1;
 
         // CPU-backend baked cubemaps (owned by the window, disposed on regen).
@@ -64,49 +64,57 @@ namespace Valtiel.PlanetGenerator.Editor
         [SerializeField] float dbgGain = 0.5f;
         [SerializeField] float dbgWarpStrength = 0.0f;
 
-        // Terrestrial params
-        [SerializeField] float continentFrequency = 1.5f;
-        [SerializeField] int   continentOctaves = 6;
-        [SerializeField] float continentLacunarity = 2.0f;
-        [SerializeField] float continentGain = 0.5f;
-        [SerializeField] float warpStrength = 0.8f;
-        [SerializeField] float seaLevel = -0.05f;
-        [SerializeField] float elevationAmplitude = 1.5f;
-        [SerializeField] float mountainStrength = 0.8f;
-        [SerializeField] float mountainStart = 0.15f;
-        [SerializeField] float mountainFull = 0.55f;
-        [SerializeField] float biomeContrast = 2.5f;
-        [SerializeField] float moistureFrequency = 2.5f;
-        [SerializeField] int   moistureOctaves = 4;
+        // Terrestrial params — defaults are the saved "Earth" preset
+        // (Library/Earth/params.json).
+        [SerializeField] float continentFrequency = 0.93f;
+        [SerializeField] int   continentOctaves = 8;
+        [SerializeField] float continentLacunarity = 2.18f;
+        [SerializeField] float continentGain = 0.608f;
+        [SerializeField] float warpStrength = 0.0f;
+        [SerializeField] float seaLevel = 0.195f;
+        [SerializeField] float elevationAmplitude = 1.11f;
+        [SerializeField] float mountainStrength = 0.55f;
+        [SerializeField] float mountainStart = 0.0f;
+        [SerializeField] float mountainFull = 0.68f;
+        [SerializeField] float biomeContrast = 3.1f;
+        [SerializeField] float moistureFrequency = 6.37f;
+        [SerializeField] int   moistureOctaves = 8;
         [SerializeField] bool  polesEnabled = true;
-        [SerializeField] float poleLatitude = 0.78f;
-        [SerializeField] float poleBlendWidth = 0.12f;
-        [SerializeField] float poleNoiseStrength = 0.05f;
-        [SerializeField] float heightScale = 0.025f;
+        [SerializeField] float poleLatitude = 0.929f;
+        [SerializeField] float poleBlendWidth = 0.143f;
+        [SerializeField] float poleNoiseStrength = 0.1112f;
+        [SerializeField] float heightScale = 0.0086f;
 
         // Climate model
-        [SerializeField] float altitudeCooling   = 0.55f;
-        [SerializeField] float tempNoiseFreq     = 4.0f;
-        [SerializeField] float tempNoiseStrength = 0.06f;
-        [SerializeField] float hadleyStrength    = 0.7f;
-        [SerializeField] float snowTempThreshold = 0.22f;
-        [SerializeField] float snowTempBlend     = 0.06f;
+        [SerializeField] float altitudeCooling   = 0.263f;
+        [SerializeField] float tempNoiseFreq     = 16.0f;
+        [SerializeField] float tempNoiseStrength = 0.2f;
+        [SerializeField] float hadleyStrength    = 0.593f;
+        [SerializeField] float snowTempThreshold = 0.2f;
+        [SerializeField] float snowTempBlend     = 0.1209f;
+
+        // Water specular (terrestrial only) — sheen on the ocean, land stays
+        // matte. waterLevel is the packed-height cutoff below which a fragment
+        // counts as water (~0.49 ≈ shoreline at the default sea level).
+        [SerializeField] float waterSpecular      = 1f;
+        [SerializeField] float waterSpecularPower = 19f;
+        [SerializeField] float waterLevel         = 0.49f;
 
         // Clouds
         [SerializeField] bool  cloudsEnabled = true;
-        [SerializeField] float cloudAltitude = 0.012f;
-        [SerializeField] float cloudFrequency = 2.2f;
-        [SerializeField] int   cloudOctaves = 6;
-        [SerializeField] float cloudLacunarity = 2.1f;
-        [SerializeField] float cloudGain = 0.55f;
-        [SerializeField] float cloudWarpStrength = 1.6f;
-        [SerializeField] float cloudCoverage = 0.45f;
-        [SerializeField] float cloudSoftness = 0.12f;
-        [SerializeField] float cloudDetailStrength = 0.35f;
+        [SerializeField] float cloudAltitude = 0.0128f;
+        [SerializeField] float cloudFrequency = 4.15f;
+        [SerializeField] int   cloudOctaves = 7;
+        [SerializeField] float cloudLacunarity = 3.4f;
+        [SerializeField] float cloudGain = 0.564f;
+        [SerializeField] float cloudWarpStrength = 2.04f;
+        [SerializeField] float cloudCoverage = 0.431f;
+        [SerializeField] float cloudSoftness = 0.113f;
+        [SerializeField] float cloudDetailStrength = 0.369f;
         [SerializeField] Color cloudColor = Color.white;
-        [SerializeField] float cloudDensity = 1.0f;
-        [SerializeField] float cloudShadowStrength = 0.55f;
-        [SerializeField] float cloudParallax = 0.02f;
+        [SerializeField] float cloudDensity = 1.25f;
+        [SerializeField] float cloudShadowStrength = 0.725f;
+        [SerializeField] float cloudParallax = 0.0405f;
         [SerializeField] float cloudAmbient = 0.04f;
 
         // Rocky (airless) params — mirrors RockyPlanetConfig fields.
@@ -234,18 +242,18 @@ namespace Valtiel.PlanetGenerator.Editor
         [SerializeField] float stMaterialEmissionFloor = 1.0f;
         [SerializeField] float stMaterialEmissionBoost = 1.5f;
 
-        [SerializeField] Color oceanDeep    = new(0.01f, 0.06f, 0.18f);
-        [SerializeField] Color oceanShallow = new(0.10f, 0.32f, 0.55f);
-        [SerializeField] Color beach        = new(0.78f, 0.72f, 0.50f);
-        [SerializeField] Color tundra       = new(0.55f, 0.55f, 0.45f); // cold-dry/mid
-        [SerializeField] Color taiga        = new(0.18f, 0.30f, 0.20f); // cold-wet
-        [SerializeField] Color desert       = new(0.85f, 0.72f, 0.42f); // hot-dry (also mild-dry)
-        [SerializeField] Color grass        = new(0.40f, 0.60f, 0.25f); // mild-mid
-        [SerializeField] Color forest       = new(0.12f, 0.32f, 0.12f); // mild-wet
-        [SerializeField] Color savanna      = new(0.72f, 0.70f, 0.32f); // hot-mid
-        [SerializeField] Color jungle       = new(0.06f, 0.30f, 0.08f); // hot-wet
-        [SerializeField] Color mountain     = new(0.42f, 0.38f, 0.33f);
-        [SerializeField] Color snow         = new(0.95f, 0.95f, 0.98f);
+        [SerializeField] Color oceanDeep    = new(0.00392f, 0.01569f, 0.07451f);
+        [SerializeField] Color oceanShallow = new(0.07451f, 0.19608f, 0.39608f);
+        [SerializeField] Color beach        = new(0.47170f, 0.38870f, 0.25587f);
+        [SerializeField] Color tundra       = new(0.19216f, 0.20392f, 0.11373f); // cold-dry/mid
+        [SerializeField] Color taiga        = new(0.10196f, 0.14902f, 0.05490f); // cold-wet
+        [SerializeField] Color desert       = new(0.77255f, 0.68235f, 0.53725f); // hot-dry (also mild-dry)
+        [SerializeField] Color grass        = new(0.15686f, 0.23922f, 0.07843f); // mild-mid
+        [SerializeField] Color forest       = new(0.09020f, 0.14118f, 0.03922f); // mild-wet
+        [SerializeField] Color savanna      = new(0.52549f, 0.44706f, 0.30980f); // hot-mid
+        [SerializeField] Color jungle       = new(0.14510f, 0.20000f, 0.06275f); // hot-wet
+        [SerializeField] Color mountain     = new(0.54118f, 0.52157f, 0.46667f);
+        [SerializeField] Color snow         = new(1.00f, 1.00f, 1.00f);
         [SerializeField] Color polar        = new(0.92f, 0.94f, 0.98f);
 
         bool colorsFoldout = true;
@@ -477,6 +485,23 @@ namespace Valtiel.PlanetGenerator.Editor
             GUILayout.Space(4);
             GUILayout.Label("Relief", EditorStyles.boldLabel);
             heightScale = EditorGUILayout.Slider("Height Scale", heightScale, 0f, 0.15f);
+
+            GUILayout.Space(4);
+            GUILayout.Label("Water Specular", EditorStyles.boldLabel);
+            waterSpecular = EditorGUILayout.Slider(new GUIContent("Strength",
+                "Specular sheen intensity on ocean fragments only. Land stays matte. 0 = off."),
+                waterSpecular, 0f, 1f);
+            using (new EditorGUI.DisabledScope(waterSpecular <= 0f))
+            {
+                waterSpecularPower = EditorGUILayout.Slider(new GUIContent("Tightness",
+                    "Blinn-Phong exponent. Higher = smaller, sharper highlight (open-ocean look)."),
+                    waterSpecularPower, 8f, 400f);
+                waterLevel = EditorGUILayout.Slider(new GUIContent("Water Level",
+                    "Packed-height cutoff: fragments below this get the sheen. " +
+                    "~0.49 sits at the shoreline for the default Sea Level; nudge if " +
+                    "you change Sea Level a lot (higher = sheen creeps onto land)."),
+                    waterLevel, 0f, 1f);
+            }
 
             GUILayout.Space(4);
             GUILayout.Label("Clouds", EditorStyles.boldLabel);
@@ -999,6 +1024,7 @@ namespace Valtiel.PlanetGenerator.Editor
                         && rkDetailNormalEnabled
                         && rkDetailNormalMap != null;
                     ApplyDetailNormalToMaterial(previewMaterial, detailNormalActive);
+                    ApplyWaterSpecular(previewMaterial);
                 }
             }
 
@@ -1095,6 +1121,7 @@ namespace Valtiel.PlanetGenerator.Editor
                     bool detailNormalActive = mode == PlanetGenMode.Rocky
                         && rkDetailNormalEnabled && rkDetailNormalMap != null;
                     ApplyDetailNormalToMaterial(previewMaterial, detailNormalActive);
+                    ApplyWaterSpecular(previewMaterial);
                 }
             }
 
@@ -1169,6 +1196,8 @@ namespace Valtiel.PlanetGenerator.Editor
             altitudeCooling = altitudeCooling, tempNoiseFreq = tempNoiseFreq,
             tempNoiseStrength = tempNoiseStrength, hadleyStrength = hadleyStrength,
             snowTempThreshold = snowTempThreshold, snowTempBlend = snowTempBlend,
+            waterSpecular = waterSpecular, waterSpecularPower = waterSpecularPower,
+            waterLevel = waterLevel,
             oceanDeep = oceanDeep, oceanShallow = oceanShallow, beach = beach,
             tundra = tundra, taiga = taiga, desert = desert,
             grass = grass, forest = forest, savanna = savanna, jungle = jungle,
@@ -1202,6 +1231,9 @@ namespace Valtiel.PlanetGenerator.Editor
             hadleyStrength = c.hadleyStrength;
             snowTempThreshold = c.snowTempThreshold > 0f ? c.snowTempThreshold : 0.22f;
             snowTempBlend = c.snowTempBlend > 0f ? c.snowTempBlend : 0.06f;
+            waterSpecular = Mathf.Clamp01(c.waterSpecular);
+            waterSpecularPower = c.waterSpecularPower > 0f ? c.waterSpecularPower : 19f;
+            waterLevel = c.waterLevel > 0f ? c.waterLevel : 0.49f;
             oceanDeep = c.oceanDeep; oceanShallow = c.oceanShallow; beach = c.beach;
             tundra = c.tundra; taiga = c.taiga; desert = c.desert;
             grass = c.grass; forest = c.forest; savanna = c.savanna; jungle = c.jungle;
@@ -2292,6 +2324,8 @@ namespace Valtiel.PlanetGenerator.Editor
                 mat.SetFloat("_CloudParallax",       cloudParallax);
             }
 
+            ApplyWaterSpecular(mat);
+
             AssetDatabase.CreateAsset(mat, path);
             return mat;
         }
@@ -2316,6 +2350,19 @@ namespace Valtiel.PlanetGenerator.Editor
             mat.SetFloat(propertyName, value ? 1f : 0f);
             if (value) mat.EnableKeyword(keyword);
             else mat.DisableKeyword(keyword);
+        }
+
+        // Water-only specular params. Terrestrial-only; other modes get 0 so no
+        // sheen leaks onto rock / gas surfaces. _WaterLevel is a packed-height
+        // cutoff (fragments in _BaseCube.a below it are water) — kept as a plain
+        // knob rather than derived, since the theoretical sea-level fraction
+        // doesn't match the actual baked height range closely enough.
+        void ApplyWaterSpecular(Material mat)
+        {
+            bool water = mode == PlanetGenMode.Terrestrial;
+            mat.SetFloat("_WaterSpecular",      water ? waterSpecular      : 0f);
+            mat.SetFloat("_WaterSpecularPower", water ? waterSpecularPower : 1f);
+            mat.SetFloat("_WaterLevel",         waterLevel);
         }
 
         // Push the rocky detail-normal params onto a material. Always sets the
