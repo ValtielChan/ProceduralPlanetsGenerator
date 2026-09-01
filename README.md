@@ -111,4 +111,7 @@ otherwise — it's an order of magnitude faster for live slider-tweaking.
 
 ## License
 
-(your choice)
+[MIT](LICENSE.md) — free to use, modify and redistribute, including in
+commercial projects. Just keep the copyright notice and license text.
+
+© 2026 Fabien Boco
